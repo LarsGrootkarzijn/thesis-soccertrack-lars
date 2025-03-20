@@ -1,7 +1,9 @@
 # SoccerTrack Master Thesis
 
 Dataset from: https://www.kaggle.com/datasets/atomscott/soccertrack
+
 Paper: https://ieeexplore.ieee.org/document/9857262
+
 ## Requirements
 
 - `wget`

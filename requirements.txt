@@ -3,3 +3,6 @@ numpy
 matplotlib
 opencv-python
 sportslabkit
+scikit-learn
+seaborn 
+tensorflow
