@@ -9,3 +9,5 @@ venv
 graphs/*
 extracted_frames/*
 soccertrack/*
+*.csv
+*.h5
