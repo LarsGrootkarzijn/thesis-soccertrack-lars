@@ -24,7 +24,6 @@ class DataPreprocessor:
         self.filtered_angle_change_frames_df = None
 
     def load_and_preprocess(self):
-        print(f"Loading annotation CSV: {self.annotation_csv_path}")
         df = slk.load_df(self.annotation_csv_path)
 
         # Extract ball columns and flatten
@@ -164,27 +163,12 @@ class LabelingUI:
         # Add click event to the plot (to add events manually)
         self.cid = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
 
+        self.load_file()
+        
     def export_annotations_to_csv(self):
         # Create a Tkinter root window (it will not be shown)
         root = tk.Tk()
         root.withdraw()  # Hide the root window since we just need the dialog
-        
-        num_files = len(os.listdir(self.annotation_folder))
-        df = pd.DataFrame(columns=["frame", "event_type", "filename"])
-
-        for file in range(num_files):
-            current_file = self.file_list[file]
-            file_event_times = self.event_times.get(current_file, [])
-
-            if len(file_event_times) == 0:
-                continue
-
-            for event_time in file_event_times:
-                event_frame = self.df[self.df['time_seconds'] >= event_time].iloc[0]
-                frame_number = event_frame['frame']
-                print(frame_number)
-                event_type = self.selected_event_types.get(event_time,)
-                df.loc[len(df)] = [frame_number, event_type, current_file]
 
         # Ask the user for a file path to save the CSV
         save_path = filedialog.asksaveasfilename(
@@ -193,11 +177,24 @@ class LabelingUI:
             title="Save Annotations As"
         )
 
+        rows = []
+
+        for filename, events in self.event_times.items():
+        # Iterate through each event (time and event type) in the list of events for the current file
+            for event in events:
+                event_time, event_type = event
+                
+                # Find the frame corresponding to this event time
+                event_frame = self.df[self.df['time_seconds'] >= event_time].iloc[0]
+                frame_number = event_frame['frame']
+                
+                # Append the frame number, event type, and filename to the rows list
+                rows.append([frame_number, event_type, filename])
+        
+        df = pd.DataFrame(rows, columns=["frame", "event_type", "filename"])
+
         if save_path:  # Only save if a path was selected
             df.to_csv(save_path, index=False)
-            print(f"File saved as {save_path}")
-        else:
-            print("Save operation canceled")
 
     def load_annotations_from_csv(self):
         # Create a Tkinter root window (it will not be shown)
@@ -209,22 +206,34 @@ class LabelingUI:
             filetypes=[("CSV Files", "*.csv")],  # File type options
             title="Open Annotations File"
         )
-         # Reload the file to reflect new events
+        
+        # Reload the file to reflect new events
         if file_path:  # If a file was selected
+            df = pd.read_csv(file_path)  # Load the CSV file as a DataFrame
             
-            df = pd.read_csv(file_path)
-            num_files = len(os.listdir(self.annotation_folder))
+            # Ensure that self.event_times is initialized correctly if it is not already
+            if not hasattr(self, 'event_times'):
+                self.event_times = {}
 
-            for file in range(num_files):
-                current_file = self.file_list[file]
-                file_event_times = self.event_times.get(current_file, [])
+            # Iterate through each row of the DataFrame
+            for _, row in df.iterrows():
+                current_file = row['filename']
+                event_time = row['frame'] / 30  # Convert frame to event time (assuming 30 fps)
+                event_type = row['event_type']
 
-                for _, row in df.iterrows():
-                    if row['filename'] == current_file:  # Check if the current row's filename matches current_file
-                        file_event_times.append((row['frame']/30))  # Add the frame to the list
-                        self.selected_event_types[row['frame']/30] = row['event_type']
+                # If the current file is not already in self.event_times, initialize it
+                if current_file not in self.event_times:
+                    self.event_times[current_file] = []
+
+                # Append the event (event_time, event_type) to the corresponding file's list
+                self.event_times[current_file].append([event_time, event_type])
+
+                # Also, add/update the selected_event_types dictionary
+                self.selected_event_types[event_time] = event_type
             
-            self.load_file()
+            # After loading the events, you might want to perform additional operations, like refreshing the UI
+            self.load_file()  # Assuming this reloads or updates the file content with the new annotations
+
 
     def load_event_types(self):
         # Load previously saved event types from file if it exists
@@ -233,10 +242,8 @@ class LabelingUI:
                 self.selected_event_types = json.load(file)
 
     def save_event(self, event_time, event_type):
-        print(f"Saving event at {event_time}s with type {event_type}")  # Debugging line
         self.selected_event_types[event_time] = event_type
         self.save_event_types()  # Save to the file
-        print(f"Event at {event_time}s saved as {event_type}")
 
 
     def load_file(self):
@@ -247,7 +254,6 @@ class LabelingUI:
         # Load the current file path
         current_file = self.file_list[self.current_file_index]
         file_path = os.path.join(self.annotation_folder, current_file)
-        print(f"Loading file: {file_path}")
 
         # Update the filename label
         self.filename_label.config(text=f"Current File: {current_file}")
@@ -272,7 +278,7 @@ class LabelingUI:
         self.plot_trajectory(file_event_times)
 
         # Refresh the sidebar to show events for this file only
-        self.refresh_sidebar(file_event_times)
+        self.refresh_sidebar(current_file)
 
     def plot_trajectory(self, file_event_times):
         # Clear previous plots
@@ -286,8 +292,8 @@ class LabelingUI:
 
         # Add vertical lines (dotted) at clicked times for Ball Trajectory
         for event_time in file_event_times:
-            event_index = df[df['time_seconds'] >= event_time].index[0]
-            self.axs[0].plot([df['bb_left'][event_index], df['bb_left'][event_index]], [0, df['bb_top'].max()], 'r:', label="Event Marker" if event_time == file_event_times[0] else "")
+            event_index = df[df['time_seconds'] >= event_time[0]].index[0]
+            self.axs[0].plot([df['bb_left'][event_index], df['bb_left'][event_index]], [0, df['bb_top'].max()], 'r:', label="Event Marker" if event_time[0] == file_event_times[0][0] else "")
 
         self.axs[0].set_title('Ball Trajectory')
         self.axs[0].set_xlabel('X Position (pixels)')
@@ -301,7 +307,7 @@ class LabelingUI:
 
         # Add vertical lines at clicked times for Velocity vs Time
         for event_time in file_event_times:
-            self.axs[1].axvline(x=event_time, color='red', linestyle=':', label="Event Marker" if event_time == file_event_times[0] else "")
+            self.axs[1].axvline(x=event_time[0], color='red', linestyle=':', label="Event Marker" if event_time[0] == file_event_times[0][0] else "")
 
         self.axs[1].set_title('Velocity vs Time')
         self.axs[1].set_xlabel('Time (seconds)')
@@ -314,7 +320,7 @@ class LabelingUI:
 
         # Add vertical lines at clicked times for Acceleration vs Time
         for event_time in file_event_times:
-            self.axs[2].axvline(x=event_time, color='red', linestyle=':', label="Event Marker" if event_time == file_event_times[0] else "")
+            self.axs[2].axvline(x=event_time[0], color='red', linestyle=':', label="Event Marker" if event_time[0] == file_event_times[0][0] else "")
 
         self.axs[2].set_title('Acceleration vs Time')
         self.axs[2].set_xlabel('Time (seconds)')
@@ -336,7 +342,7 @@ class LabelingUI:
         self.window.update_idletasks()  # Update idle tasks
         self.window.update()  # Force update the Tkinter window
 
-    def refresh_sidebar(self, file_event_times):
+    def refresh_sidebar(self, current_file):
         # Clear existing events in the sidebar
         for widget in self.sidebar_frame.winfo_children():
             widget.destroy()
@@ -344,8 +350,9 @@ class LabelingUI:
         # Reload the events for the current file
         self.event_widgets = []  # Store references to event widgets for later management
 
+        file_event_times = self.event_times.get(current_file, [])
         for event_time in file_event_times:
-            event_frame = self.df[self.df['time_seconds'] >= event_time].iloc[0]
+            event_frame = self.df[self.df['time_seconds'] >= event_time[0]].iloc[0]
             frame_number = event_frame['frame']
             event_row = tk.Frame(self.sidebar_frame)
             event_row.pack(fill=tk.X, pady=5)
@@ -356,77 +363,79 @@ class LabelingUI:
 
             # Event type dropdown
             event_type_var = tk.StringVar()
-            event_type_var.set(self.selected_event_types.get(event_time, "Pass"))  # Load the event type for this event
+            event_type_var.set(self.selected_event_types.get(event_time[0], event_time[1]))  # Load the event type for this event
 
             event_type_dropdown = ttk.Combobox(event_row, textvariable=event_type_var, values=self.event_types)
             event_type_dropdown.pack(side=tk.LEFT, padx=5)
 
             # Add trace to save the event when the dropdown value changes
-            event_type_var.trace("w", lambda name, index, mode, var=event_type_var, time=event_time: self.save_event(time, var.get()))
+            event_type_var.trace("w", lambda name, index, mode, var=event_type_var, time=event_time[0]: self.update_label(time, var, event_time, self.event_times, current_file))
 
             # Remove button
             # Remove button inside refresh_sidebar function
-            remove_button = tk.Button(event_row, text="Remove", command=lambda row=event_row, time=event_time: self.remove_event(row, time))
+            remove_button = tk.Button(event_row, text="Remove", command=lambda row=event_row, time=event_time[0]: self.remove_event(row, time))
 
             remove_button.pack(side=tk.RIGHT, padx=5)
 
             # Store the row to manage it later
             self.event_widgets.append({
                 "row": event_row,
-                "time": event_time,
+                "time": event_time[0],
                 "frame_label": frame_label,
                 "event_type_dropdown": event_type_dropdown,
                 "remove_button": remove_button
             })
 
+    def update_label(self, time, event, event_time, event_times, current_file):
+        self.selected_event_types.update({time: event.get()})
+        event_type = self.selected_event_types.get(time)
+
+        event_list = self.event_times.get(current_file, [])
+
+        # Iterate through the event list to find the event with the matching timestamp
+        for event in event_list:
+            if np.array_equal(event[0], time):
+                # Update the event type to the new value
+                event[1] = event_type
+                break  # Exit the loop once the update is done
 
     def remove_event(self, event_row, event_time):
         # Remove the event from the selected_event_types dictionary
         if event_time in self.selected_event_types:
             del self.selected_event_types[event_time]
-            self.save_event_types()  # Save the updated event types to file
-            print(f"Removed from selected_event_types: Event at {event_time}s")
 
         # Remove the event from event_times dictionary (for the current file)
         current_file = self.file_list[self.current_file_index]
         if current_file in self.event_times:
-            if event_time in self.event_times[current_file]:
-                self.event_times[current_file].remove(event_time)
-                self.event_times[current_file] = sorted(self.event_times[current_file])  # Keep the times sorted
-                print(f"Removed from event_times: Event at {event_time}s")
-
-        # Remove the event from the DataFrame (if applicable)
-        if event_time in self.df['time_seconds'].values:
-            self.df = self.df[self.df['time_seconds'] != event_time]  # Remove rows with this time
-            print(f"Removed from DataFrame: Event at {event_time}s")
+            # Fix the comparison by iterating over event_times and checking time explicitly
+            self.event_times[current_file] = [
+                event for event in self.event_times[current_file] if event[0] != event_time
+            ]
 
         # Remove the event row from the sidebar UI
         event_row.destroy()  # Remove the event row from the sidebar
-        print(f"Removed row from sidebar for event at {event_time}s")
 
         # After removing, refresh the sidebar to reflect the current state of event times
-        self.refresh_sidebar(self.event_times.get(current_file, []))
+        self.refresh_sidebar(current_file)
 
         # Optional: You can refresh the plot as well to ensure the event is removed visually
         self.plot_trajectory(self.event_times.get(current_file, []))
 
-
-
     def save_event(self, event_time, event_type):
         # Save the event type for the event time
         self.selected_event_types[event_time] = event_type
-        self.save_event_types()  # Save to the file
-        print(f"Event at {event_time}s set to {event_type}")
 
     def on_click(self, event):
     # This will get the time of the click on the graph
         if event.inaxes:
             x_pos = event.xdata
-            event_times = self.event_times.get(self.file_list[self.current_file_index], [])
-            event_times.append(x_pos)
-            self.event_times[self.file_list[self.current_file_index]] = sorted(set(event_times))  # Avoid duplicates and sort
-            self.load_file()  # Reload the file to reflect new events
-
+            event_type = "Pass" #standard
+            event_list = self.event_times.get(self.file_list[self.current_file_index], [])
+            event_list.append([x_pos, event_type])
+            event_list = list({event[0]: event for event in event_list}.values())
+            event_list = sorted(event_list, key=lambda x: x[0])
+            self.event_times[self.file_list[self.current_file_index]] = event_list
+            self.load_file() 
 
     def prev_file(self):
         if self.current_file_index > 0:
